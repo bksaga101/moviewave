@@ -1,59 +1,64 @@
-import os  
-import json  
-import asyncio  
-from datetime import datetime, timedelta  
-from telegram import Update  
-from telegram.ext import Application, CommandHandler, ContextTypes  
-from apscheduler.schedulers.asyncio import AsyncIOScheduler  
+import os
+import json
+import asyncio
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
+from flask import Flask
+from threading import Thread
+import nest_asyncio
 
-BOT_TOKEN = os.environ['BOT_TOKEN']  
+nest_asyncio.apply()  # Fix event loop issues
 
-# Load all posts (current + old)  
-def load_posts():  
-    try:  
-        with open("posts.json", "r") as f:  
-            current_posts = json.load(f)  
-    except:  
-        current_posts = {}  
+app = Flask(__name__)
 
-    try:  
-        with open("old_posts.json", "r") as f:  
-            old_posts = json.load(f)  
-    except:  
-        old_posts = {}  
+@app.route('/')
+def home():
+    return "Bot is running!"
 
-    return {**old_posts, **current_posts}  
+def run_flask():
+    app.run(host='0.0.0.0', port=10000)
 
-# Auto-shift old posts weekly  
-async def archive_old_posts():  
-    try:  
-        # Load current posts  
-        with open("posts.json", "r") as f:  
-            current_posts = json.load(f)  
+BOT_TOKEN = os.environ['BOT_TOKEN']
 
-        # Load old posts  
-        try:  
-            with open("old_posts.json", "r") as f:  
-                old_posts = json.load(f)  
-        except:  
-            old_posts = {}  
+def load_posts():
+    try:
+        # Load current posts
+        with open("posts.json", "r") as f:
+            current_posts = json.load(f)
+        
+        # Load old posts (if file exists)
+        try:
+            with open("old_post.json", "r") as f:
+                old_posts = json.load(f)
+        except FileNotFoundError:
+            old_posts = {}
+        
+        # Merge both (current posts override old ones)
+        return {**old_posts, **current_posts}
+        
+    except Exception as e:
+        print(f"Error loading posts: {e}")
+        return {}
 
-        # Check dates  
-        cutoff_date = datetime.now() - timedelta(days=7)  
-        to_archive = {}  
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text(
+            "🚫 Direct access not allowed!\n\n"
+            "Visit: https://www.moviewave.online/"
+        )
+        return
 
-        for post_id, post in list(current_posts.items()):  
-            post_date = datetime.strptime(post["date"], "%Y-%m-%d")  
-            if post_date < cutoff_date:  
-                to_archive[post_id] = post  
-                del current_posts[post_id]  
+    post_id = context.args[0].upper()
+    posts = load_posts()
+    await update.message.reply_text(
+        posts[post_id]["download_url"] if post_id in posts else "❌ Invalid Link!"
+    )
 
-        # Update files  
-        with open("posts.json", "w") as f:  
-            json.dump(current_posts, f, indent=2)  
+async def main():
+    Thread(target=run_flask).start()
+    bot_app = Application.builder().token(BOT_TOKEN).build()
+    bot_app.add_handler(CommandHandler("start", start))
+    await bot_app.run_polling()
 
-        with open("old_posts.json", "w") as f:  
-            json.dump({**old_posts, **to_archive}, f, indent=2)  
-
-    except Exception as e:  
-        print(f"
+if __name__ == "__main__":
+    asyncio.run(main())
